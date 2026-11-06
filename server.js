@@ -12,6 +12,18 @@ const DEFAULT_POSTER = 'https://images.unsplash.com/photo-1543589077-47d51996477
 
 app.use(cors());
 
+// Pomocné funkce pro dekódování a vyčištění ID z Nuvio
+function extractCleanId(rawParamId) {
+  if (!rawParamId) return '';
+  let decoded = decodeURIComponent(rawParamId);
+  decoded = decoded.replace(/\.json$/, '');
+  return decoded;
+}
+
+function extractTmdbId(cleanId) {
+  return cleanId.replace(/^(tmdb:|tmdb%3A)/i, '').trim();
+}
+
 // Vyhledání streamů přes Torrentio s upřednostněním českého dabingu
 async function getXmasStreams(imdbId) {
   const streams = [];
@@ -46,7 +58,7 @@ async function getXmasStreams(imdbId) {
 
 const manifest = {
   id: "org.xmas.cz.nuvio",
-  version: "1.3.0",
+  version: "1.4.0",
   name: "Vánoční Filmy & Pohádky",
   description: "České i zahraniční vánoční filmy a pohádky s českým dabingem a Real-Debrid",
   logo: "https://upload.wikimedia.org/wikipedia/commons/e/ea/Christmas_tree_icon.svg",
@@ -126,17 +138,20 @@ app.get(['/catalog/:type/:id.json', '/catalog/:type/:id/:extra.json'], async (re
   }
 });
 
-// 2. META ENDPOINT
-app.get(['/meta/:type/:id.json', '/meta/:type/:id'], async (req, res) => {
-  const cleanId = req.params.id.replace(/\.json$/, '');
-  const tmdbId = cleanId.replace('tmdb:', '');
+// 2. META ENDPOINT (Plně imunní vůči chybám v Nuvio)
+app.get('/meta/:type/:id*', async (req, res) => {
+  const rawIdParam = req.params.id + (req.params[0] || '');
+  const cleanId = extractCleanId(rawIdParam);
+  const tmdbId = extractTmdbId(cleanId);
+
+  console.log(`[Meta Request] Clean ID: ${cleanId}, TMDB ID: ${tmdbId}`);
 
   try {
-    const url = `https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_KEY}&language=cs-CZ&append_to_response=external_ids`;
+    const url = `https://api.themoviedb.org/3/movie/${tmdbId}?api_key=${TMDB_KEY}&language=cs-CZ`;
     const response = await axios.get(url, { timeout: 8000 });
     const data = response.data;
 
-    if (data) {
+    if (data && data.id) {
       const poster = data.poster_path ? `https://image.tmdb.org/t/p/w500${data.poster_path}` : DEFAULT_POSTER;
       const background = data.backdrop_path ? `https://image.tmdb.org/t/p/w1280${data.backdrop_path}` : poster;
 
@@ -157,22 +172,24 @@ app.get(['/meta/:type/:id.json', '/meta/:type/:id'], async (req, res) => {
     console.error('[Meta Error]:', err.message);
   }
 
+  // Bezpečný záložní detail s odpovídajícím ID
   res.json({
     meta: {
       id: cleanId,
       type: "movie",
-      name: "Detail filmu",
+      name: "Vánoční film",
       poster: DEFAULT_POSTER,
       background: DEFAULT_POSTER,
-      description: "Přehrávání streamu."
+      description: "Přehrávání videa přes Real-Debrid..."
     }
   });
 });
 
 // 3. STREAM ENDPOINT
-app.get(['/stream/:type/:id.json', '/stream/:type/:id'], async (req, res) => {
-  const cleanId = req.params.id.replace(/\.json$/, '');
-  const tmdbId = cleanId.replace('tmdb:', '');
+app.get('/stream/:type/:id*', async (req, res) => {
+  const rawIdParam = req.params.id + (req.params[0] || '');
+  const cleanId = extractCleanId(rawIdParam);
+  const tmdbId = extractTmdbId(cleanId);
 
   try {
     const tmdbRes = await axios.get(`https://api.themoviedb.org/3/movie/${tmdbId}/external_ids?api_key=${TMDB_KEY}`, { timeout: 8000 });
@@ -191,4 +208,4 @@ app.get(['/stream/:type/:id.json', '/stream/:type/:id'], async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Vánoční Addon v1.3.0 spuštěn na portu ${PORT}`));
+app.listen(PORT, () => console.log(`Vánoční Addon v1.4.0 spuštěn na portu ${PORT}`));
