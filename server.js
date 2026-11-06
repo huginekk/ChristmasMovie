@@ -9,6 +9,8 @@ const PORT = process.env.PORT || 7000;
 const TMDB_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJiY2Q4OThmMzFmNWE5MjNmOTRjY2VkYjdkOWMyYjFhNyIsIm5iZiI6MTc2ODYwMTUwMC45NjUsInN1YiI6IjY5NmFiNzljMmQwNjE1Y2UwZGQ5MzU5ZSIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.qwpD2titaCL-_S_S-u7ii4asA7fIWG1_oYTeGOlTxCY';
 const RD_TOKEN = 'O4J2OEAEIRF6IVVLJHXVUFMCKIGBDGHHOYW6INH5HIKUVWUXBZZQ';
 
+const DEFAULT_POSTER = 'https://images.unsplash.com/photo-1543589077-47d51996477a?q=80&w=500';
+
 const tmdbHeaders = {
   'Authorization': `Bearer ${TMDB_TOKEN}`,
   'Accept': 'application/json'
@@ -16,7 +18,7 @@ const tmdbHeaders = {
 
 app.use(cors());
 
-// Vyhledání streamů přes Torrentio s upřednostněním českého dabingu
+// Vyhledání streamů přes Torrentio s akcentem na CZ dabing
 async function getXmasStreams(imdbId) {
   const streams = [];
   try {
@@ -55,27 +57,28 @@ async function getXmasStreams(imdbId) {
   return streams;
 }
 
+// Manifest s vlastní sekcí "Vánoční" v rozbalovacím menu Type
 const manifest = {
   id: "org.xmas.cz.nuvio",
-  version: "1.1.0",
-  name: "Vánoční Filmy & Pohádky (CZ)",
+  version: "1.2.0",
+  name: "Vánoční Filmy & Pohádky",
   description: "České i zahraniční vánoční filmy a pohádky s českým dabingem a Real-Debrid",
   logo: "https://upload.wikimedia.org/wikipedia/commons/e/ea/Christmas_tree_icon.svg",
   background: "https://images.unsplash.com/photo-1543589077-47d51996477a?q=80&w=1920",
   resources: ["catalog", "meta", "stream"],
-  types: ["movie"],
+  types: ["Vánoční", "movie"],
   idPrefixes: ["tmdb:"],
   catalogs: [
     {
-      type: "movie",
+      type: "Vánoční",
       id: "xmas_cz",
-      name: "🇨🇿 České vánoční pohádky & klasiky",
+      name: "🇨🇿 České pohádky & klasiky",
       extra: [{ name: "search", isRequired: false }, { name: "skip", isRequired: false }]
     },
     {
-      type: "movie",
+      type: "Vánoční",
       id: "xmas_world",
-      name: "🎄 Zahraniční vánoční trháky (CZ dabing)",
+      name: "🎄 Zahraniční vánoční trháky",
       extra: [{ name: "search", isRequired: false }, { name: "skip", isRequired: false }]
     }
   ],
@@ -95,8 +98,7 @@ function parseExtra(extraStr) {
 
 // 1. CATALOG ENDPOINT
 app.get(['/catalog/:type/:id.json', '/catalog/:type/:id/:extra.json'], async (req, res) => {
-  const catalogId = req.params.id;
-  const extraStr = req.params.extra || '';
+  const { type, id: catalogId, extra: extraStr } = req.params;
   const extra = parseExtra(extraStr);
   const { search, skip } = extra;
   const page = skip ? Math.floor(parseInt(skip) / 20) + 1 : 1;
@@ -118,11 +120,11 @@ app.get(['/catalog/:type/:id.json', '/catalog/:type/:id/:extra.json'], async (re
     if (response.data && response.data.results) {
       response.data.results.forEach(item => {
         if (!item.title) return;
-        const poster = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : manifest.background;
+        const poster = item.poster_path ? `https://image.tmdb.org/t/p/w500${item.poster_path}` : DEFAULT_POSTER;
 
         metas.push({
           id: `tmdb:${item.id}`,
-          type: "movie",
+          type: type || "Vánoční",
           name: item.title,
           poster: poster,
           description: item.overview || `Hodnocení: ${item.vote_average}/10 | Rok: ${(item.release_date || '').split('-')[0]}`
@@ -130,7 +132,7 @@ app.get(['/catalog/:type/:id.json', '/catalog/:type/:id/:extra.json'], async (re
       });
     }
 
-    console.log(`[Catalog Success] Načteno ${metas.length} filmů.`);
+    console.log(`[Catalog Success] Odesláno ${metas.length} filmů.`);
     res.json({ metas });
   } catch (err) {
     console.error('[Catalog Error]:', err.message);
@@ -138,10 +140,11 @@ app.get(['/catalog/:type/:id.json', '/catalog/:type/:id/:extra.json'], async (re
   }
 });
 
-// 2. META ENDPOINT (Detail filmu)
+// 2. META ENDPOINT (Načítání detailu + plakátu a pozadí)
 app.get(['/meta/:type/:id.json', '/meta/:type/:id'], async (req, res) => {
-  const rawId = req.params.id.replace(/\.json$/, '');
-  const tmdbId = rawId.replace('tmdb:', '');
+  const { type, id: rawId } = req.params;
+  const cleanId = rawId.replace(/\.json$/, '');
+  const tmdbId = cleanId.replace('tmdb:', '');
 
   try {
     const url = `https://api.themoviedb.org/3/movie/${tmdbId}?language=cs-CZ&append_to_response=external_ids`;
@@ -149,13 +152,16 @@ app.get(['/meta/:type/:id.json', '/meta/:type/:id'], async (req, res) => {
     const data = response.data;
 
     if (data) {
+      const poster = data.poster_path ? `https://image.tmdb.org/t/p/w500${data.poster_path}` : DEFAULT_POSTER;
+      const background = data.backdrop_path ? `https://image.tmdb.org/t/p/w1280${data.backdrop_path}` : poster;
+
       return res.json({
         meta: {
-          id: rawId,
-          type: "movie",
-          name: data.title,
-          poster: data.poster_path ? `https://image.tmdb.org/t/p/w500${data.poster_path}` : manifest.background,
-          background: data.backdrop_path ? `https://image.tmdb.org/t/p/original${data.backdrop_path}` : manifest.background,
+          id: cleanId,
+          type: type || "Vánoční",
+          name: data.title || data.original_title,
+          poster: poster,
+          background: background,
           description: data.overview || 'Bez popisu.',
           genres: data.genres ? data.genres.map(g => g.name) : ['Vánoční'],
           releaseInfo: (data.release_date || '').split('-')[0]
@@ -166,14 +172,14 @@ app.get(['/meta/:type/:id.json', '/meta/:type/:id'], async (req, res) => {
     console.error('[Meta Error]:', err.message);
   }
 
-  // Záložní odpověď při výpadku TMDB, zabraňující chybě v Nuvio
+  // Záložní odpověď zabraňující chybě v Nuvio
   res.json({
     meta: {
-      id: rawId,
-      type: "movie",
+      id: cleanId,
+      type: type || "Vánoční",
       name: "Detail filmu",
-      poster: manifest.background,
-      background: manifest.background,
+      poster: DEFAULT_POSTER,
+      background: DEFAULT_POSTER,
       description: "Přehrávání streamu."
     }
   });
@@ -181,8 +187,8 @@ app.get(['/meta/:type/:id.json', '/meta/:type/:id'], async (req, res) => {
 
 // 3. STREAM ENDPOINT
 app.get(['/stream/:type/:id.json', '/stream/:type/:id'], async (req, res) => {
-  const rawId = req.params.id.replace(/\.json$/, '');
-  const tmdbId = rawId.replace('tmdb:', '');
+  const cleanId = req.params.id.replace(/\.json$/, '');
+  const tmdbId = cleanId.replace('tmdb:', '');
 
   try {
     const tmdbRes = await axios.get(`https://api.themoviedb.org/3/movie/${tmdbId}/external_ids`, { headers: tmdbHeaders, timeout: 8000 });
@@ -201,4 +207,4 @@ app.get(['/stream/:type/:id.json', '/stream/:type/:id'], async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Vánoční Addon v1.1.0 spuštěn na portu ${PORT}`));
+app.listen(PORT, () => console.log(`Vánoční Addon v1.2.0 spuštěn na portu ${PORT}`));
